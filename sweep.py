@@ -110,6 +110,13 @@ def generate_sin_pulse(frequency=500000,
 
 
 def open_socket(hostname):
+	if hostname.startswith('SN208'):
+		hostname = bone_connect.get_ipv6_link_local_address_from_serial(hostname)
+
+	return bone_connect(hostname)
+
+
+def authenticate_socket(socket: bone_connect):
 	questions = [
 		inquirer.Text('username', message="Enter Username", default="admin"),
 		inquirer.Password('password', message="Enter Password", default="")
@@ -117,15 +124,11 @@ def open_socket(hostname):
 
 	answers = inquirer.prompt(questions)
 
-	if hostname.startswith('SN208'):
-		hostname = bone_connect.get_ipv6_link_local_address_from_serial(hostname)
+	if answers is None:
+		raise Exception("Login cancelled by user")
 
-	username = None
-	password = None
-
-	if answers is not None:
-		username = answers.get("username")
-		password = answers.get("password")		
+	username = answers.get("username")
+	password = answers.get("password")		
 
 	if username is None or len(username) == 0:
 		raise Exception("Username cannot be empty")
@@ -133,7 +136,8 @@ def open_socket(hostname):
 	if password is None or len(password) == 0:
 		raise Exception("Password cannot be empty")
 
-	return bone_connect(hostname, username, password)
+	socket.login(username, password)
+
 
 def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None):
 	ax = plt.axes()
@@ -427,6 +431,7 @@ def main():
 			ref[0], ref[1] = getRefData(ref_file)
 
 	with open_socket(args.hostname) as bone:
+		authenticate_socket(bone)
 		bone.send_message({'command':'stimulus', 'payload': {'mode':6}})
 		bone.send_message({'command':'channel_attributes', 'payload': {'name': 'autoconfig', 'data': {'autolevel': False, 'autovga': False}}})
 		bone.send_message({'command':'vga', 'payload': {'vga': args.vga}})
