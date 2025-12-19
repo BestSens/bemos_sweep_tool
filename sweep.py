@@ -1,5 +1,5 @@
 from typing import Optional
-from python_utilities.bone.bone_connect import bone_connect
+from bone.bone_connect import bone_connect
 from math import sin, cos, pi, ceil, log10
 import inquirer
 import time

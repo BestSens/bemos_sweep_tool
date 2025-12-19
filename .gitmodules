@@ -1,0 +1,3 @@
+[submodule "bone"]
+	path = bone
+	url = git@github.com:BestSens/bone_connect.git
