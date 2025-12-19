@@ -338,6 +338,7 @@ def parseArgs():
 	parser.add_argument("--vga", nargs="?", type=int, default=vga, help=f"VGA setting (0-7) (default: {vga})")
 	parser.add_argument("--gates", action="store_true", help="Enable integrator gate measurement")
 	parser.add_argument("--use_integral_measurement", action="store_true", help="Use integral measurement instead of peak measurement")
+	parser.add_argument("--custom_gate", nargs=2, action="append", type=int, metavar=('LOW', 'HIGH'), help="Set custom integrator gate (in samples)")
 	return parser.parse_args()
 
 
@@ -446,6 +447,10 @@ def main():
 
 		if args.gates:
 			pullIntegratorGates(bone)
+
+		if args.custom_gate:
+			for (low, high) in args.custom_gate:
+				integral_gates.append((low, high))
 
 		for frequency in tqdm(range(50_000, 1_100_001, 1_000 if args.high_res else 10_000)):
 			temp_gate_energies = setFreqGetEnergy(bone, frequency, args.avg, args.use_integral_measurement)

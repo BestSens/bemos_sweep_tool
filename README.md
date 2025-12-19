@@ -18,6 +18,7 @@ python ./sweep.py --calib calib_file.csv SN208148
 ```
 usage: sweep.py [-h] [--high_res] [--avg [AVG]] [--ref [REF]] [--out [OUT]] [--calib [CALIB]] [--fmin [FMIN]]
                 [--fmax [FMAX]] [--level [LEVEL]] [--vga [VGA]] [--gates] [--use_integral_measurement]
+                [--custom_gate LOW HIGH]
                 hostname
 
 positional arguments:
@@ -37,6 +38,8 @@ options:
   --gates               Enable integrator gate measurement
   --use_integral_measurement
                         Use integral measurement instead of peak measurement
+  --custom_gate LOW HIGH
+                        Set custom integrator gate (in samples)
 ```
 
 ## Create calibration curve
