@@ -257,9 +257,9 @@ def calculateIntegral(dv: list, vga: int, low: Optional[int] = None, high: Optio
 		low = 0
 
 	if high is None:
-		high = len(dv) - 1
+		high = len(dv)
 		
-	gate_energy = sum([abs(x) for x in dv[low:high]]) * (1. / ADC_SAMPLE_RATE)
+	gate_energy = sum([abs(x) for x in dv[low:high-1]]) * (1. / ADC_SAMPLE_RATE)
 	return scaleVGA(gate_energy, vga)
 
 
@@ -268,9 +268,9 @@ def calculateMax(dv: list, vga: int, low: Optional[int] = None, high: Optional[i
 		low = 0
 
 	if high is None:
-		high = len(dv) - 1
+		high = len(dv)
 		
-	gate_energy = max([abs(x) for x in dv[low:high]])
+	gate_energy = max([abs(x) for x in dv[low:high-1]])
 	return scaleVGA(gate_energy, vga)
 
 
