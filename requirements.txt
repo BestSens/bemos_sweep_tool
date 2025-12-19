@@ -1,0 +1,6 @@
+inquirer
+tqdm
+matplotlib
+pandas
+numpy
+scipy
