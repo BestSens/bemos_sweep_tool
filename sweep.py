@@ -21,6 +21,8 @@ level = 127.
 f_min = 100_000
 f_max = 1_000_000
 
+dv_length = 1024
+
 integral_gates = [
 	(None, None)
 ]
@@ -141,15 +143,16 @@ def authenticate_socket(socket: bone_connect):
 
 def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None):
 	ax = plt.axes()
+	ax.set_title(f"Frequency Response {title}")
+	
 	formatter_time = EngFormatter(unit="s")
 
 	for i, (low, high) in enumerate(integral_gates):
-		if i == 0:
-			ax.scatter(frequencies, gate_energies[0], label=title, zorder=5)
-		else:
-			range_min = low / ADC_SAMPLE_RATE if low is not None else 0
-			range_max = high / ADC_SAMPLE_RATE if high is not None else (len(gate_energies[0]) - 1) / ADC_SAMPLE_RATE
-			ax.scatter(frequencies, gate_energies[i], label=f'Integrator Gate {i} ({formatter_time(range_min)} - {formatter_time(range_max)})', alpha=0.7, zorder=4 - i)
+		range_min = low / ADC_SAMPLE_RATE if low is not None else 0
+		range_max = high / ADC_SAMPLE_RATE if high is not None else dv_length / ADC_SAMPLE_RATE
+		
+		label = f'Integrator Gate {i} ({formatter_time(range_min)} - {formatter_time(range_max)})' if i > 0 else f'Full Range ({formatter_time(range_min)} - {formatter_time(range_max)})'
+		ax.scatter(frequencies, gate_energies[i], label=label, alpha=0.7, zorder=5-i)
 
 	if ref:
 		ax.scatter(ref[0], ref[1], color='gray', label='ref', alpha=0.1)
@@ -300,6 +303,10 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 	for _ in range(avg):
 		time.sleep(0.1)
 		dv = bone.dv_data()
+
+		global dv_length
+		dv_length = len(dv)
+
 		gate_energies_temp = calculateDvEnergy(dv, getVGA(bone), use_integral_measurement)
 
 		for i, e in enumerate(gate_energies_temp):
