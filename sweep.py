@@ -21,7 +21,9 @@ level = 127.
 f_min = 100_000
 f_max = 1_000_000
 
-integral_gates = []
+integral_gates = [
+	(None, None)
+]
 
 def hann_window(series: list) -> list:
 	"""Apply Von Hann Window to the given list
@@ -133,35 +135,36 @@ def open_socket(hostname):
 
 	return bone_connect(hostname, username, password)
 
-def plotFrequencyResponse(frequencies, energies, gate_energies, title=None, ref=None, error=None):
+def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None):
 	ax = plt.axes()
-	ax.scatter(frequencies, energies, label=title, zorder=5)
-
 	formatter_time = EngFormatter(unit="s")
 
 	for i, (low, high) in enumerate(integral_gates):
-		range_min = low / ADC_SAMPLE_RATE
-		range_max = high / ADC_SAMPLE_RATE
-		ax.scatter(frequencies, gate_energies[i], label=f'Integrator Gate {i + 1} ({formatter_time(range_min)} - {formatter_time(range_max)})', alpha=0.7, zorder=4 - i)
+		if i == 0:
+			ax.scatter(frequencies, gate_energies[0], label=title, zorder=5)
+		else:
+			range_min = low / ADC_SAMPLE_RATE if low is not None else 0
+			range_max = high / ADC_SAMPLE_RATE if high is not None else (len(gate_energies[0]) - 1) / ADC_SAMPLE_RATE
+			ax.scatter(frequencies, gate_energies[i], label=f'Integrator Gate {i} ({formatter_time(range_min)} - {formatter_time(range_max)})', alpha=0.7, zorder=4 - i)
 
 	if ref:
 		ax.scatter(ref[0], ref[1], color='gray', label='ref', alpha=0.1)
 
-	f_min_energy = energies[frequencies.index(f_min)]
-	f_max_energy = energies[frequencies.index(f_max)]
+	f_min_energy = gate_energies[0][frequencies.index(f_min)]
+	f_max_energy = gate_energies[0][frequencies.index(f_max)]
 
-	relevant_slice = energies[frequencies.index(f_min):frequencies.index(f_max)]
+	relevant_slice = gate_energies[0][frequencies.index(f_min):frequencies.index(f_max)]
 
-	max_energy = max(energies)
-	max_freq = frequencies[energies.index(max_energy)]
+	max_energy = max(gate_energies[0])
+	max_freq = frequencies[gate_energies[0].index(max_energy)]
 
 	energy_min = min([f_min_energy, f_max_energy, max_energy])
 	energy_max = max([f_min_energy, f_max_energy, max_energy])
 	ripple = energy_max - energy_min
 	att = sum(relevant_slice) / len(relevant_slice)
 
-	graph_min_y = min(energies)
-	graph_max_y = max(energies)
+	graph_min_y = min([min(ge) for ge in gate_energies])
+	graph_max_y = max([max(ge) for ge in gate_energies])
 	interval = graph_max_y - graph_min_y
 	margin = interval * 0.1
 
@@ -265,20 +268,16 @@ def calculateMax(dv: list, vga: int, low: Optional[int] = None, high: Optional[i
 
 
 def calculateDvEnergy(dv, vga, use_integral_measurement=False):
-	if use_integral_measurement:
-		full_energy = calculateIntegral(dv, vga)
-	else:
-		full_energy = calculateMax(dv, vga)
-
 	gate_energies = []
 	for (low, high) in integral_gates:
 		if use_integral_measurement:
 			gate_energy = calculateIntegral(dv, vga, low, high)
 		else:
 			gate_energy = calculateMax(dv, vga, low, high)
+		
 		gate_energies.append(gate_energy)
 
-	return full_energy, gate_energies
+	return gate_energies
 
 
 def genDv(frequency):
@@ -292,22 +291,15 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 	pulse = genDv(frequency)
 	bone.send_message({'command':'arbitrary', 'payload': {'len':len(pulse), 'arbitrary_data':pulse}})
 
-	energy = 0.0
 	gate_energies = [0.0 for _ in integral_gates]
 
 	for _ in range(avg):
 		time.sleep(0.1)
 		dv = bone.dv_data()
-		full_energy, gate_energies_temp = calculateDvEnergy(dv, getVGA(bone), use_integral_measurement)
-		energy = energy + full_energy
+		gate_energies_temp = calculateDvEnergy(dv, getVGA(bone), use_integral_measurement)
 
 		for i, e in enumerate(gate_energies_temp):
 			gate_energies[i] = gate_energies[i] + e
-
-	energy = energy / avg
-	energy_db = getCalibratedEnergy(frequency, energy)
-	energy_db = energy_db / (20. / 256. * level)
-	energy_db = 20 * log10(energy_db)
 
 	gate_energies_db = []
 
@@ -318,7 +310,7 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 		e_db = 20 * log10(e_db)
 		gate_energies_db.append(e_db)
 
-	return (energy_db, gate_energies_db)
+	return gate_energies_db
 
 
 def parseArgs():
@@ -343,10 +335,13 @@ def getRefData(file):
 	return df['Frequency [Hz]'].tolist(), df['Amplitude [dB]'].tolist()
 
 
-def saveData(file, freqs, energies, gate_energies):
-	data = {'Frequency [Hz]': freqs, 'Amplitude [dB]': energies}
+def saveData(file, freqs, gate_energies):
+	data = {'Frequency [Hz]': freqs}
 	for i, gate_energy_list in enumerate(gate_energies):
-		data[f'Integrator Gate {i+1} [dB]'] = gate_energy_list
+		if i == 0:
+			data['Amplitude [dB]'] = gate_energy_list
+		else:
+			data[f'Integrator Gate {i+1} [dB]'] = gate_energy_list
 	
 	df = pd.DataFrame(data)
 	df.to_csv(file, index=False, lineterminator='\n')
@@ -397,9 +392,11 @@ def pullIntegratorGates(bone: bone_connect):
 	try:
 		gate_0_low = response["payload"]["global"]["integrator_gate_low"]
 		gate_0_high = response["payload"]["global"]["integrator_gate_high"]
+		integral_gates.append((gate_0_low, gate_0_high))
+
 		gate_1_low = response["payload"]["global"]["integrator_1_gate_low"]
 		gate_1_high = response["payload"]["global"]["integrator_1_gate_high"]
-		integral_gates = [(gate_0_low, gate_0_high), (gate_1_low, gate_1_high)]
+		integral_gates.append((gate_1_low, gate_1_high))
 	except KeyError as e:
 		print(f"Warning: Could not retrieve integrator gate settings from device. ({e})")
 		integral_gates = []
@@ -417,7 +414,6 @@ def main():
 		f_max = args.fmax
 
 	freqs = []
-	energies = []
 	gate_energies = []
 	ref = [[], []]
 
@@ -440,10 +436,9 @@ def main():
 			pullIntegratorGates(bone)
 
 		for frequency in tqdm(range(50_000, 1_100_001, 1_000 if args.high_res else 10_000)):
-			(energy, temp_gate_energies) = setFreqGetEnergy(bone, frequency, args.avg, args.use_integral_measurement)
+			temp_gate_energies = setFreqGetEnergy(bone, frequency, args.avg, args.use_integral_measurement)
 
 			freqs.append(frequency)
-			energies.append(energy)
 
 			if len(gate_energies) == 0:
 				gate_energies = [[] for _ in integral_gates]
@@ -455,7 +450,7 @@ def main():
 
 		if args.out:
 			with open(args.out, 'w') as out_file:
-				saveData(out_file, freqs, energies, gate_energies)
+				saveData(out_file, freqs, gate_energies)
 
 		error = None
 
@@ -463,11 +458,11 @@ def main():
 			idx_min = freqs.index(f_min)
 			idx_max = freqs.index(f_max)
 			relevant_frequencies = freqs[idx_min:idx_max]
-			relevant_energies = energies[idx_min:idx_max]
+			relevant_energies = gate_energies[0][idx_min:idx_max]
 			error = calculateRefError(relevant_frequencies, relevant_energies, ref)
 			error = sum([abs(e) for e in error]) / len(error)
 
-		plotFrequencyResponse(freqs, energies, gate_energies, serial, ref, error)
+		plotFrequencyResponse(freqs, gate_energies, serial, ref, error)
 
 
 if __name__ == "__main__":
