@@ -143,7 +143,10 @@ def authenticate_socket(socket: bone_connect):
 
 def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None):
 	ax = plt.axes()
-	ax.set_title(f"Frequency Response {title}")
+	plot_title = "Frequency Response"
+	if title:
+		plot_title = f"{plot_title} {title}"
+	ax.set_title(plot_title)
 	
 	formatter_time = EngFormatter(unit="s")
 
@@ -339,6 +342,7 @@ def parseArgs():
 	parser.add_argument("--gates", action="store_true", help="Enable integrator gate measurement")
 	parser.add_argument("--use_integral_measurement", action="store_true", help="Use integral measurement instead of peak measurement")
 	parser.add_argument("--custom_gate", nargs=2, action="append", type=int, metavar=('LOW', 'HIGH'), help="Set custom integrator gate (in samples)")
+	parser.add_argument("--additional_text", nargs="?", type=str, help="Additional text to add to the plot title")
 	return parser.parse_args()
 
 
@@ -471,6 +475,10 @@ def main():
 
 		serial = bone.send_message({'command':'serial_number'})["payload"]["serial_number"]
 
+		plot_title = serial
+		if args.additional_text:
+			plot_title = f"{plot_title} - {args.additional_text}"
+
 		if args.out:
 			with open(args.out, 'w') as out_file:
 				saveData(out_file, freqs, gate_energies)
@@ -485,7 +493,7 @@ def main():
 			error = calculateRefError(relevant_frequencies, relevant_energies, ref)
 			error = sum([abs(e) for e in error]) / len(error)
 
-		plotFrequencyResponse(freqs, gate_energies, serial, ref, error)
+		plotFrequencyResponse(freqs, gate_energies, plot_title, ref, error)
 
 
 if __name__ == "__main__":
