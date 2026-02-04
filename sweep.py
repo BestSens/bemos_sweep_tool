@@ -1,6 +1,7 @@
 from typing import Optional
 from bone.bone_connect import bone_connect
 from math import sin, cos, pi, ceil, log10
+import os
 import inquirer
 import time
 from tqdm import tqdm
@@ -207,6 +208,10 @@ def plotFrequencyResponse(frequencies, gate_energies, overflows, title=None, ref
 
 	ax.text(0.985, 0.985, f"ripple: {ripple:.0f} dB\nattenuation: {att:.0f} dB{err_text}", verticalalignment='top', horizontalalignment='right', fontsize=24, color=text_color, transform=ax.transAxes)
 	ax.text(0.015, 0.015, f"gain: {scaleVGA(1., vga):.0f}\nlevel: {level / 255. * 100.:.0f}%\ntemp: {temperature:.1f} °C", verticalalignment='bottom', horizontalalignment='left', fontsize=24, color='gray', transform=ax.transAxes)
+
+	if calib:
+		calib_names = [os.path.basename(path) for path in calib]
+		ax.text(0.985, 0.015, "calibration files:\n" + "\n".join(calib_names), verticalalignment='bottom', horizontalalignment='right', fontsize=12, color='gray', transform=ax.transAxes)
 
 	ax.axhline(y=att, color='gray', linestyle='--', alpha=0.5)
 
