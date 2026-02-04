@@ -557,6 +557,7 @@ def main():
 		bone.send_message({'command':'channel_attributes', 'payload': {'name': 'autoconfig', 'data': {'autolevel': False, 'autovga': False}}})
 		bone.send_message({'command':'vga', 'payload': {'vga': vga}})
 		bone.send_message({'command':'level', 'payload': {'level': level}})
+		bone.send_message({'command':'cycle_time', 'payload': {'cycle_time': 10_000}})
 
 		serial = bone.send_message({'command':'serial_number'})["payload"]["serial_number"]
 
