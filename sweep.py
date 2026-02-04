@@ -415,7 +415,7 @@ def pullIntegratorGates(bone: bone_connect):
 
 
 def main():
-	global f_min, f_max
+	global f_min, f_max, level, vga
 
 	args = parseArgs()
 
@@ -424,6 +424,12 @@ def main():
 
 	if args.fmax:
 		f_max = args.fmax
+
+	if args.level:
+		level = args.level
+
+	if args.vga:
+		vga = args.vga
 
 	freqs = []
 	gate_energies = []
@@ -442,8 +448,8 @@ def main():
 		authenticate_socket(bone)
 		bone.send_message({'command':'stimulus', 'payload': {'mode':6}})
 		bone.send_message({'command':'channel_attributes', 'payload': {'name': 'autoconfig', 'data': {'autolevel': False, 'autovga': False}}})
-		bone.send_message({'command':'vga', 'payload': {'vga': args.vga}})
-		bone.send_message({'command':'level', 'payload': {'level': args.level}})
+		bone.send_message({'command':'vga', 'payload': {'vga': vga}})
+		bone.send_message({'command':'level', 'payload': {'level': level}})
 
 		if args.gates:
 			pullIntegratorGates(bone)
