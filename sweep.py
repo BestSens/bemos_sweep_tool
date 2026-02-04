@@ -151,7 +151,7 @@ def authenticate_socket(socket: bone_connect):
 	socket.login(username, password)
 
 
-def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None, temperature=None):
+def plotFrequencyResponse(frequencies, gate_energies, overflows, title=None, ref=None, error=None, temperature=None, calib=None):
 	ax = plt.axes()
 	plot_title = "Frequency Response"
 	if title:
@@ -165,7 +165,12 @@ def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, erro
 		range_max = high / ADC_SAMPLE_RATE if high is not None else dv_length / ADC_SAMPLE_RATE
 		
 		label = f'Integrator Gate {i} ({formatter_time(range_min)} - {formatter_time(range_max)})' if i > 0 else f'Full Range ({formatter_time(range_min)} - {formatter_time(range_max)})'
-		ax.scatter(frequencies, gate_energies[i], label=label, alpha=0.7, zorder=5-i)
+		y_values = [e[0] if isinstance(e, (tuple, list)) else e for e in gate_energies[i]]
+		if overflows and len(overflows) == len(frequencies):
+			colors = ['red' if overflows[idx] else 'C0' for idx in range(len(frequencies))]
+			ax.scatter(frequencies, y_values, label=label, alpha=0.7, zorder=5-i, c=colors)
+		else:
+			ax.scatter(frequencies, y_values, label=label, alpha=0.7, zorder=5-i)
 
 	if ref:
 		ax.scatter(ref[0], ref[1], color='gray', label='ref', alpha=0.1)
@@ -321,7 +326,9 @@ def calculateIntegral(dv: list, vga: int, low: Optional[int] = None, high: Optio
 		high = len(dv)
 		
 	gate_energy = sum([abs(x) for x in dv[low:high-1]]) * (1. / ADC_SAMPLE_RATE)
-	return scaleVGA(gate_energy, vga)
+	overflow = any([abs(x) >= 2.49 for x in dv[low:high-1]])
+	
+	return (scaleVGA(gate_energy, vga), overflow)
 
 
 def calculateMax(dv: list, vga: int, low: Optional[int] = None, high: Optional[int] = None):
@@ -332,18 +339,20 @@ def calculateMax(dv: list, vga: int, low: Optional[int] = None, high: Optional[i
 		high = len(dv)
 		
 	gate_energy = max([abs(x) for x in dv[low:high-1]])
-	return scaleVGA(gate_energy, vga)
+	overflow = gate_energy >= 2.49
+	
+	return (scaleVGA(gate_energy, vga), overflow)
 
 
 def calculateDvEnergy(dv, vga, use_integral_measurement=False):
 	gate_energies = []
 	for (low, high) in integral_gates:
 		if use_integral_measurement:
-			gate_energy = calculateIntegral(dv, vga, low, high)
+			(gate_energy, overflow) = calculateIntegral(dv, vga, low, high)
 		else:
-			gate_energy = calculateMax(dv, vga, low, high)
-		
-		gate_energies.append(gate_energy)
+			(gate_energy, overflow) = calculateMax(dv, vga, low, high)
+
+		gate_energies.append((gate_energy, overflow))
 
 	return gate_energies
 
@@ -385,6 +394,7 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 	gate_energies = [0.0 for _ in integral_gates]
 
 	last_dv = None
+	has_overflow = False
 	for _ in range(avg):
 		time.sleep(0.1)
 		dv = bone.dv_data()
@@ -395,8 +405,11 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 
 		gate_energies_temp = calculateDvEnergy(dv, getVGA(bone), use_integral_measurement)
 
-		for i, e in enumerate(gate_energies_temp):
+		for i, (e, overflow) in enumerate(gate_energies_temp):
 			gate_energies[i] = gate_energies[i] + e
+			
+			if overflow:
+				has_overflow = True
 
 	if LIVE_DV_ENABLED and last_dv is not None:
 		temperature = getTemp(bone)
@@ -411,7 +424,7 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 		e_db = 20 * log10(e_db)
 		gate_energies_db.append(e_db)
 
-	return gate_energies_db
+	return (gate_energies_db, has_overflow)
 
 
 def parseArgs():
@@ -526,6 +539,7 @@ def main():
 
 	freqs = []
 	gate_energies = []
+	overflows = []
 	ref = [[], []]
 
 	if args.calib:
@@ -559,9 +573,10 @@ def main():
 				integral_gates.append((low, high))
 
 		for frequency in tqdm(range(50_000, 1_100_001, 1_000 if args.high_res else 10_000)):
-			temp_gate_energies = setFreqGetEnergy(bone, frequency, args.avg, args.use_integral_measurement)
+			(temp_gate_energies, overflow) = setFreqGetEnergy(bone, frequency, args.avg, args.use_integral_measurement)
 
 			freqs.append(frequency)
+			overflows.append(overflow)
 
 			if len(gate_energies) == 0:
 				gate_energies = [[] for _ in integral_gates]
@@ -588,7 +603,7 @@ def main():
 			plt.show()
 		else:
 			temperature = getTemp(bone)
-			plotFrequencyResponse(freqs, gate_energies, plot_title, ref, error, temperature)
+			plotFrequencyResponse(freqs, gate_energies, overflows, plot_title, ref, error, temperature, args.calib)
 
 
 if __name__ == "__main__":
