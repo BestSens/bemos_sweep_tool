@@ -9,9 +9,19 @@ import pandas as pd
 import numpy as np
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import EngFormatter
+from matplotlib.ticker import EngFormatter, FuncFormatter, MultipleLocator
 
 from scipy.interpolate import interp1d
+
+LIVE_DV_ENABLED = False
+LIVE_DV_TITLE = "Frequency Response"
+_live_dv_fig = None
+_live_dv_ax = None
+_live_dv_line = None
+_live_dv_text = None
+_live_dv_over = None
+_live_dv_last_redraw = 0.0
+LIVE_DV_MIN_UPDATE_INTERVAL = 0.25
 
 DAC_SAMPLE_RATE = 4 * 10 ** 6
 ADC_SAMPLE_RATE = 10 * 10 ** 6
@@ -141,7 +151,7 @@ def authenticate_socket(socket: bone_connect):
 	socket.login(username, password)
 
 
-def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None):
+def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, error=None, temperature=None):
 	ax = plt.axes()
 	plot_title = "Frequency Response"
 	if title:
@@ -191,7 +201,7 @@ def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, erro
 			text_color = 'red'
 
 	ax.text(0.985, 0.985, f"ripple: {ripple:.0f} dB\nattenuation: {att:.0f} dB{err_text}", verticalalignment='top', horizontalalignment='right', fontsize=24, color=text_color, transform=ax.transAxes)
-	ax.text(0.015, 0.015, f"gain: {scaleVGA(1., vga):.0f}\nlevel: {level / 255. * 100.:.0f}%", verticalalignment='bottom', horizontalalignment='left', fontsize=24, color='gray', transform=ax.transAxes)
+	ax.text(0.015, 0.015, f"gain: {scaleVGA(1., vga):.0f}\nlevel: {level / 255. * 100.:.0f}%\ntemp: {temperature:.1f} °C", verticalalignment='bottom', horizontalalignment='left', fontsize=24, color='gray', transform=ax.transAxes)
 
 	ax.axhline(y=att, color='gray', linestyle='--', alpha=0.5)
 
@@ -239,6 +249,54 @@ def plotFrequencyResponse(frequencies, gate_energies, title=None, ref=None, erro
 	ax.legend()
 
 	plt.show()
+
+
+def initLiveDvPlot():
+	global _live_dv_fig, _live_dv_ax, _live_dv_line, _live_dv_text, _live_dv_over
+	plt.ion()
+	_live_dv_fig, _live_dv_ax = plt.subplots(figsize=(19.2, 10.8), dpi=100)
+	_live_dv_ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.1f} V"))
+	_live_dv_ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0f} µs"))
+	_live_dv_ax.xaxis.set_major_locator(MultipleLocator(10))
+	_live_dv_ax.set_ylim(-3, 3)
+	_live_dv_ax.set_yticks(np.arange(-2.5, 2.51, 0.5))
+	_live_dv_ax.set_axisbelow(True)
+	_live_dv_ax.grid(True, which='major', linestyle=':', alpha=0.35)
+	_live_dv_ax.axhspan(2.5, 3, color='red', alpha=0.08)
+	_live_dv_ax.axhspan(-3, -2.5, color='red', alpha=0.08)
+	_live_dv_ax.axhline(2.5, color='gray', linestyle='--', alpha=0.6)
+	_live_dv_ax.axhline(-2.5, color='gray', linestyle='--', alpha=0.6)
+	_live_dv_line, = _live_dv_ax.plot([], [], lw=1)
+	_live_dv_over = _live_dv_ax.scatter([], [], s=10, color='red', zorder=5)
+	_live_dv_text = _live_dv_ax.text(0.01, 0.99, "", transform=_live_dv_ax.transAxes,
+								va='top', ha='left', fontsize=12, color='gray')
+	_live_dv_fig.canvas.draw()
+	_live_dv_fig.canvas.flush_events()
+
+
+def updateLiveDvPlot(dv, frequency, plot_title, vga, level, temperature):
+	global _live_dv_fig, _live_dv_ax, _live_dv_line, _live_dv_text, _live_dv_last_redraw, _live_dv_over
+	if _live_dv_fig is None:
+		initLiveDvPlot()
+	now = time.monotonic()
+	if now - _live_dv_last_redraw < LIVE_DV_MIN_UPDATE_INTERVAL:
+		return
+	_live_dv_last_redraw = now
+	x = [i / ADC_SAMPLE_RATE * 1_000_000 for i in range(len(dv))]
+	_live_dv_line.set_data(x, dv)
+	over_idx = [i for i, y in enumerate(dv) if y >= 2.49 or y <= -2.5]
+	
+	if over_idx:
+		_live_dv_over.set_offsets([(x[i], dv[i]) for i in over_idx])
+	else:
+		_live_dv_over.set_offsets(np.empty((0, 2)))
+	
+	_live_dv_ax.set_xlim(0, max((len(dv)) / ADC_SAMPLE_RATE * 1_000_000, 1))
+	_live_dv_ax.set_ylim(-3, 3)
+	_live_dv_ax.set_title(plot_title)
+	_live_dv_text.set_text(f"gain: {scaleVGA(1., vga):.0f} - level: {level / 255. * 100.:.0f}%\nfrequency: {frequency / 1000:.0f} kHz\ntemp: {temperature:.1f} °C")
+	_live_dv_fig.canvas.draw_idle()
+	_live_dv_fig.canvas.flush_events()
 
 
 def getVGA(socket):
@@ -297,15 +355,40 @@ def genDv(frequency):
 	return [round((sample + 1.) * 127.) for sample in pulse]
 
 
+def getTemp(bone):
+	response = bone.send_message({'command':'temp'})
+	temp0 = None
+	temp1 = None
+
+	if 'payload' in response:
+		if 'temp0' in response['payload']:
+			temp0 = response['payload']['temp0']
+		if 'temp1' in response['payload']:
+			temp1 = response['payload']['temp1']
+
+	if temp0 is None and temp1 is None:
+		temp_mean = np.nan
+	elif temp0 is None:
+		temp_mean = temp1
+	elif temp1 is None:
+		temp_mean = temp0
+	else:
+		temp_mean = (temp0 + temp1) / 2.0
+
+	return temp_mean
+
+
 def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 	pulse = genDv(frequency)
 	bone.send_message({'command':'arbitrary', 'payload': {'len':len(pulse), 'arbitrary_data':pulse}})
 
 	gate_energies = [0.0 for _ in integral_gates]
 
+	last_dv = None
 	for _ in range(avg):
 		time.sleep(0.1)
 		dv = bone.dv_data()
+		last_dv = dv
 
 		global dv_length
 		dv_length = len(dv)
@@ -314,6 +397,10 @@ def setFreqGetEnergy(bone, frequency, avg=1, use_integral_measurement=False):
 
 		for i, e in enumerate(gate_energies_temp):
 			gate_energies[i] = gate_energies[i] + e
+
+	if LIVE_DV_ENABLED and last_dv is not None:
+		temperature = getTemp(bone)
+		updateLiveDvPlot(last_dv, frequency, LIVE_DV_TITLE, vga, level, temperature)
 
 	gate_energies_db = []
 
@@ -343,6 +430,7 @@ def parseArgs():
 	parser.add_argument("--use_integral_measurement", action="store_true", help="Use integral measurement instead of peak measurement")
 	parser.add_argument("--custom_gate", nargs=2, action="append", type=int, metavar=('LOW', 'HIGH'), help="Set custom integrator gate (in samples)")
 	parser.add_argument("--additional_text", nargs="?", type=str, help="Additional text to add to the plot title")
+	parser.add_argument("--live_dv", action="store_true", help="Show live DirectView plot while sweeping")
 	return parser.parse_args()
 
 
@@ -419,9 +507,10 @@ def pullIntegratorGates(bone: bone_connect):
 
 
 def main():
-	global f_min, f_max, level, vga
+	global f_min, f_max, level, vga, LIVE_DV_ENABLED, LIVE_DV_TITLE
 
 	args = parseArgs()
+	LIVE_DV_ENABLED = args.live_dv
 
 	if args.fmin:
 		f_min = args.fmin
@@ -455,6 +544,13 @@ def main():
 		bone.send_message({'command':'vga', 'payload': {'vga': vga}})
 		bone.send_message({'command':'level', 'payload': {'level': level}})
 
+		serial = bone.send_message({'command':'serial_number'})["payload"]["serial_number"]
+
+		plot_title = serial
+		if args.additional_text:
+			plot_title = f"{plot_title} - {args.additional_text}"
+		LIVE_DV_TITLE = plot_title
+
 		if args.gates:
 			pullIntegratorGates(bone)
 
@@ -473,12 +569,6 @@ def main():
 			for i, e in enumerate(temp_gate_energies):
 				gate_energies[i].append(e)
 
-		serial = bone.send_message({'command':'serial_number'})["payload"]["serial_number"]
-
-		plot_title = serial
-		if args.additional_text:
-			plot_title = f"{plot_title} - {args.additional_text}"
-
 		if args.out:
 			with open(args.out, 'w') as out_file:
 				saveData(out_file, freqs, gate_energies)
@@ -493,7 +583,12 @@ def main():
 			error = calculateRefError(relevant_frequencies, relevant_energies, ref)
 			error = sum([abs(e) for e in error]) / len(error)
 
-		plotFrequencyResponse(freqs, gate_energies, plot_title, ref, error)
+		if LIVE_DV_ENABLED:
+			plt.ioff()
+			plt.show()
+		else:
+			temperature = getTemp(bone)
+			plotFrequencyResponse(freqs, gate_energies, plot_title, ref, error, temperature)
 
 
 if __name__ == "__main__":
